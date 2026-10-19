@@ -10,7 +10,11 @@ from typing import Optional, Dict, Any, List
 from openai import OpenAI
 
 from ..config import Config
-from .openai_chat_compat import create_chat_completion, extract_chat_completion_text
+from .openai_chat_compat import (
+    create_chat_completion,
+    extract_chat_completion_text,
+    is_anthropic_base_url,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -161,7 +165,7 @@ class LLMClient:
         messages: List[Dict[str, str]],
         temperature: float = 0.3,
         max_tokens: Optional[int] = 4096,
-        max_attempts: int = 1,
+        max_attempts: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         发送聊天请求并返回JSON
@@ -170,11 +174,14 @@ class LLMClient:
             messages: 消息列表
             temperature: 温度参数
             max_tokens: 最大token数
-            max_attempts: 内容生成尝试次数（不含一次明确的JSON模式能力降级）
+            max_attempts: 内容生成尝试次数（不含一次明确的JSON模式能力降级）。
+                默认 1；Anthropic 端点忽略 response_format，默认 2（解析失败重试一次）
             
         Returns:
             解析后的JSON对象
         """
+        if max_attempts is None:
+            max_attempts = 2 if is_anthropic_base_url(getattr(self, "base_url", None)) else 1
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
 

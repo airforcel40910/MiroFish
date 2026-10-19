@@ -22,6 +22,7 @@ from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, t
 from ..utils.openai_chat_compat import create_chat_completion, extract_chat_completion_text
+from ..utils.llm_client import _clean_chat_text
 from .zep_entity_reader import EntityNode, ZepEntityReader
 
 logger = get_logger('mirofish.simulation_config')
@@ -453,7 +454,8 @@ class SimulationConfigGenerator:
                     # 不设置max_tokens，让LLM自由发挥
                 )
                 
-                content = extract_chat_completion_text(response)
+                # 去除 ```json 代码块包裹（Anthropic 端点忽略 response_format）
+                content = _clean_chat_text(extract_chat_completion_text(response))
                 finish_reason = response.choices[0].finish_reason
                 
                 # 检查是否被截断
