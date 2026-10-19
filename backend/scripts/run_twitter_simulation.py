@@ -116,8 +116,7 @@ def setup_oasis_logging(log_dir: str):
 
 
 try:
-    from camel.models import ModelFactory
-    from camel.types import ModelPlatformType
+    from camel_llm import create_camel_model, get_max_concurrency
     import oasis
     from oasis import (
         ActionType,
@@ -426,38 +425,11 @@ class TwitterSimulationRunner:
     
     def _create_model(self):
         """
-        创建LLM模型
+        创建LLM模型（Agent 动作使用加速模型 LLM_BOOST_*，未配置时回退 LLM_*）
         
-        统一使用项目根目录 .env 文件中的配置（优先级最高）：
-        - LLM_API_KEY: API密钥
-        - LLM_BASE_URL: API基础URL
-        - LLM_MODEL_NAME: 模型名称
+        统一使用项目根目录 .env 文件中的配置，见 scripts/camel_llm.py
         """
-        # 优先从 .env 读取配置
-        llm_api_key = os.environ.get("LLM_API_KEY", "")
-        llm_base_url = os.environ.get("LLM_BASE_URL", "")
-        llm_model = os.environ.get("LLM_MODEL_NAME", "")
-        
-        # 如果 .env 中没有，则使用 config 作为备用
-        if not llm_model:
-            llm_model = self.config.get("llm_model", "gpt-4o-mini")
-        
-        # 设置 camel-ai 所需的环境变量
-        if llm_api_key:
-            os.environ["OPENAI_API_KEY"] = llm_api_key
-        
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise ValueError("缺少 API Key 配置，请在项目根目录 .env 文件中设置 LLM_API_KEY")
-        
-        if llm_base_url:
-            os.environ["OPENAI_API_BASE_URL"] = llm_base_url
-        
-        print(f"LLM配置: model={llm_model}, base_url={llm_base_url[:40] if llm_base_url else '默认'}...")
-        
-        return ModelFactory.create(
-            model_platform=ModelPlatformType.OPENAI,
-            model_type=llm_model,
-        )
+        return create_camel_model(self.config, use_boost=True)
     
     def _get_active_agents_for_round(
         self, 
@@ -593,7 +565,7 @@ class TwitterSimulationRunner:
             agent_graph=self.agent_graph,
             platform=oasis.DefaultPlatformType.TWITTER,
             database_path=db_path,
-            semaphore=30,  # 限制最大并发 LLM 请求数，防止 API 过载
+            semaphore=get_max_concurrency(),  # 限制最大并发 LLM 请求数（LLM_MAX_CONCURRENCY）
         )
         
         await self.env.reset()

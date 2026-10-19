@@ -218,7 +218,8 @@ def test_chat_json_defaults_to_one_content_attempt():
     assert len(sequence.calls) == 1
 
 
-@pytest.mark.parametrize("status_code", [400, 401, 429, 500])
+# 429/529 are retried with backoff by openai_chat_compat (see test_anthropic_compat.py)
+@pytest.mark.parametrize("status_code", [400, 401, 500])
 def test_chat_json_does_not_retry_unrelated_provider_errors(status_code):
     provider_error = ProviderError(
         status_code=status_code,
