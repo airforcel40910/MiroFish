@@ -20,7 +20,7 @@ from ..services.simulation_runner import (
 )
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
 from ..utils.logger import get_logger
-from ..utils.locale import t, get_locale, set_locale
+from ..utils.locale import t, get_locale, set_locale, get_all_translations
 from ..utils.zep_lifecycle import get_graph_readers, graph_lifecycle_lock
 from ..models.project import ProjectManager
 
@@ -52,7 +52,7 @@ def _get_default_platform(simulation_id: str) -> str:
 
 # Interview prompt 优化前缀
 # 添加此前缀可以避免Agent调用工具，直接用文本回复
-INTERVIEW_PROMPT_PREFIX = "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我："
+# The prefix text lives in locales/*.json (interview.chatPrefix) so it follows the UI language.
 
 
 def optimize_interview_prompt(prompt: str) -> str:
@@ -67,10 +67,10 @@ def optimize_interview_prompt(prompt: str) -> str:
     """
     if not prompt:
         return prompt
-    # 避免重复添加前缀
-    if prompt.startswith(INTERVIEW_PROMPT_PREFIX):
+    # 避免重复添加前缀（任一语言的前缀都算）
+    if prompt.startswith(tuple(get_all_translations('interview.chatPrefix'))):
         return prompt
-    return f"{INTERVIEW_PROMPT_PREFIX}{prompt}"
+    return f"{t('interview.chatPrefix')}{prompt}"
 
 
 # ============== 实体读取接口 ==============
