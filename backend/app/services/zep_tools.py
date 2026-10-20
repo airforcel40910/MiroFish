@@ -17,7 +17,7 @@ from zep_cloud import NotFoundError
 from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.llm_client import LLMClient
-from ..utils.locale import get_locale, t
+from ..utils.locale import t
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
 from ..utils.zep import (
     call_zep_read_with_retry,
@@ -309,11 +309,11 @@ class AgentInterview:
     def to_text(self) -> str:
         text = f"**{self.agent_name}** ({self.agent_role})\n"
         # 显示完整的agent_bio，不截断
-        text += f"_简介: {self.agent_bio}_\n\n"
+        text += f"_{t('interview.bio')}: {self.agent_bio}_\n\n"
         text += f"**Q:** {self.question}\n\n"
         text += f"**A:** {self.response}\n"
         if self.key_quotes:
-            text += "\n**关键引言:**\n"
+            text += f"\n**{t('interview.keyQuotes')}:**\n"
             for quote in self.key_quotes:
                 # 清理各种引号
                 clean_quote = quote.replace('\u201c', '').replace('\u201d', '').replace('"', '')
@@ -325,14 +325,17 @@ class AgentInterview:
                 # 过滤包含问题编号的垃圾内容（问题1-9）
                 skip = False
                 for d in '123456789':
-                    if f'\u95ee\u9898{d}' in clean_quote:
+                    if f'\u95ee\u9898{d}' in clean_quote or f'Question {d}' in clean_quote:
                         skip = True
                         break
                 if skip:
                     continue
                 # 截断过长内容（按句号截断，而非硬截断）
                 if len(clean_quote) > 150:
-                    dot_pos = clean_quote.find('\u3002', 80)
+                    dot_pos = min(
+                        (p for p in (clean_quote.find('\u3002', 80), clean_quote.find('. ', 80)) if p > 0),
+                        default=-1,
+                    )
                     if dot_pos > 0:
                         clean_quote = clean_quote[:dot_pos + 1]
                     else:
@@ -380,25 +383,25 @@ class InterviewResult:
     def to_text(self) -> str:
         """转换为详细的文本格式，供LLM理解和报告引用"""
         text_parts = [
-            "## 深度采访报告",
-            f"**采访主题:** {self.interview_topic}",
-            f"**采访人数:** {self.interviewed_count} / {self.total_agents} 位模拟Agent",
-            "\n### 采访对象选择理由",
-            self.selection_reasoning or "（自动选择）",
+            f"## {t('interview.reportTitle')}",
+            f"**{t('interview.topic')}:** {self.interview_topic}",
+            f"**{t('interview.count')}:** {t('interview.countValue', count=self.interviewed_count, total=self.total_agents)}",
+            f"\n### {t('interview.selectionHeading')}",
+            self.selection_reasoning or t('interview.autoSelected'),
             "\n---",
-            "\n### 采访实录",
+            f"\n### {t('interview.transcriptHeading')}",
         ]
 
         if self.interviews:
             for i, interview in enumerate(self.interviews, 1):
-                text_parts.append(f"\n#### 采访 #{i}: {interview.agent_name}")
+                text_parts.append(f"\n#### {t('interview.interviewNumber', n=i, name=interview.agent_name)}")
                 text_parts.append(interview.to_text())
                 text_parts.append("\n---")
         else:
-            text_parts.append("（无采访记录）\n\n---")
+            text_parts.append(f"{t('interview.noRecords')}\n\n---")
 
-        text_parts.append("\n### 采访摘要与核心观点")
-        text_parts.append(self.summary or "（无摘要）")
+        text_parts.append(f"\n### {t('interview.summaryHeading')}")
+        text_parts.append(self.summary or t('interview.noSummary'))
 
         return "\n".join(text_parts)
 
@@ -1316,7 +1319,7 @@ class ZepToolsService:
         
         if not profiles:
             logger.warning(t("console.profilesNotFound", simId=simulation_id))
-            result.summary = "未找到可采访的Agent人设文件"
+            result.summary = t('interview.noProfiles')
             return result
         
         result.total_agents = len(profiles)
@@ -1347,18 +1350,7 @@ class ZepToolsService:
         combined_prompt = "\n".join([f"{i+1}. {q}" for i, q in enumerate(result.interview_questions)])
         
         # 添加优化前缀，约束Agent回复格式
-        INTERVIEW_PROMPT_PREFIX = (
-            "你正在接受一次采访。请结合你的人设、所有的过往记忆与行动，"
-            "以纯文本方式直接回答以下问题。\n"
-            "回复要求：\n"
-            "1. 直接用自然语言回答，不要调用任何工具\n"
-            "2. 不要返回JSON格式或工具调用格式\n"
-            "3. 不要使用Markdown标题（如#、##、###）\n"
-            "4. 按问题编号逐一回答，每个回答以「问题X：」开头（X为问题编号）\n"
-            "5. 每个问题的回答之间用空行分隔\n"
-            "6. 回答要有实质内容，每个问题至少回答2-3句话\n\n"
-        )
-        optimized_prompt = f"{INTERVIEW_PROMPT_PREFIX}{combined_prompt}"
+        optimized_prompt = f"{t('interview.reportPrefix')}{combined_prompt}"
         
         # Step 4: 调用真实的采访API（不指定platform，默认双平台同时采访）
         try:
@@ -1385,9 +1377,9 @@ class ZepToolsService:
             
             # 检查API调用是否成功
             if not api_result.get("success", False):
-                error_msg = api_result.get("error", "未知错误")
+                error_msg = api_result.get("error", t('interview.unknownError'))
                 logger.warning(t("console.interviewApiReturnedFailure", error=error_msg))
-                result.summary = f"采访API调用失败：{error_msg}。请检查OASIS模拟环境状态。"
+                result.summary = t('interview.apiFailed', error=error_msg)
                 return result
             
             # Step 5: 解析API返回结果，构建AgentInterview对象
@@ -1398,7 +1390,7 @@ class ZepToolsService:
             for i, agent_idx in enumerate(selected_indices):
                 agent = selected_agents[i]
                 agent_name = agent.get("realname", agent.get("username", f"Agent_{agent_idx}"))
-                agent_role = agent.get("profession", "未知")
+                agent_role = agent.get("profession", t('interview.unknown'))
                 agent_bio = agent.get("bio", "")
                 
                 # 获取该Agent在两个平台的采访结果
@@ -1413,9 +1405,10 @@ class ZepToolsService:
                 reddit_response = self._clean_tool_call_response(reddit_response)
 
                 # 始终输出双平台标记
-                twitter_text = twitter_response if twitter_response else "（该平台未获得回复）"
-                reddit_text = reddit_response if reddit_response else "（该平台未获得回复）"
-                response_text = f"【Twitter平台回答】\n{twitter_text}\n\n【Reddit平台回答】\n{reddit_text}"
+                no_reply = t('interview.noPlatformReply')
+                twitter_text = twitter_response if twitter_response else no_reply
+                reddit_text = reddit_response if reddit_response else no_reply
+                response_text = f"{t('interview.platformTwitter')}\n{twitter_text}\n\n{t('interview.platformReddit')}\n{reddit_text}"
 
                 # 提取关键引言（从两个平台的回答中）
                 import re
@@ -1426,18 +1419,20 @@ class ZepToolsService:
                 clean_text = re.sub(r'\{[^}]*tool_name[^}]*\}', '', clean_text)
                 clean_text = re.sub(r'[*_`|>~\-]{2,}', '', clean_text)
                 clean_text = re.sub(r'问题\d+[：:]\s*', '', clean_text)
+                clean_text = re.sub(r'Question\s*\d+[：:]\s*', '', clean_text, flags=re.IGNORECASE)
                 clean_text = re.sub(r'【[^】]+】', '', clean_text)
+                clean_text = re.sub(r'\[(?:Twitter|Reddit) platform answer\]', '', clean_text)
 
                 # 策略1（主）: 提取完整的有实质内容的句子
-                sentences = re.split(r'[。！？]', clean_text)
+                sentences = re.split(r'[。！？]|(?<=[.!?])\s+', clean_text)
                 meaningful = [
                     s.strip() for s in sentences
                     if 20 <= len(s.strip()) <= 150
                     and not re.match(r'^[\s\W，,；;：:、]+', s.strip())
-                    and not s.strip().startswith(('{', '问题'))
+                    and not s.strip().startswith(('{', '问题', 'Question'))
                 ]
                 meaningful.sort(key=len, reverse=True)
-                key_quotes = [s + "。" for s in meaningful[:3]]
+                key_quotes = [s + t('interview.sentenceEnd') for s in meaningful[:3]]
 
                 # 策略2（补充）: 正确配对的中文引号「」内长文本
                 if not key_quotes:
@@ -1460,13 +1455,13 @@ class ZepToolsService:
         except ValueError as e:
             # 模拟环境未运行
             logger.warning(t("console.interviewApiCallFailed", error=e))
-            result.summary = f"采访失败：{str(e)}。模拟环境可能已关闭，请确保OASIS环境正在运行。"
+            result.summary = t('interview.envFailed', error=str(e))
             return result
         except Exception as e:
             logger.error(t("console.interviewApiCallException", error=e))
             import traceback
             logger.error(traceback.format_exc())
-            result.summary = f"采访过程发生错误：{str(e)}"
+            result.summary = t('interview.errorOccurred', error=str(e))
             return result
         
         # Step 6: 生成采访摘要
@@ -1537,7 +1532,7 @@ class ZepToolsService:
                             "username": row.get("username", ""),
                             "bio": row.get("description", ""),
                             "persona": row.get("user_char", ""),
-                            "profession": "未知"
+                            "profession": t('interview.unknown')
                         })
                 logger.info(t("console.loadedTwitterProfiles", count=len(profiles)))
                 return profiles
@@ -1569,36 +1564,22 @@ class ZepToolsService:
             summary = {
                 "index": i,
                 "name": profile.get("realname", profile.get("username", f"Agent_{i}")),
-                "profession": profile.get("profession", "未知"),
+                "profession": profile.get("profession", t('interview.unknown')),
                 "bio": profile.get("bio", "")[:200],
                 "interested_topics": profile.get("interested_topics", [])
             }
             agent_summaries.append(summary)
         
-        system_prompt = """你是一个专业的采访策划专家。你的任务是根据采访需求，从模拟Agent列表中选择最适合采访的对象。
+        system_prompt = t('interview.selectSystem')
 
-选择标准：
-1. Agent的身份/职业与采访主题相关
-2. Agent可能持有独特或有价值的观点
-3. 选择多样化的视角（如：支持方、反对方、中立方、专业人士等）
-4. 优先选择与事件直接相关的角色
-
-返回JSON格式：
-{
-    "selected_indices": [选中Agent的索引列表],
-    "reasoning": "选择理由说明"
-}"""
-
-        user_prompt = f"""采访需求：
-{interview_requirement}
-
-模拟背景：
-{simulation_requirement if simulation_requirement else "未提供"}
-
-可选择的Agent列表（共{len(agent_summaries)}个）：
-{json.dumps(agent_summaries, ensure_ascii=False, indent=2)}
-
-请选择最多{max_agents}个最适合采访的Agent，并说明选择理由。"""
+        user_prompt = t(
+            'interview.selectUser',
+            requirement=interview_requirement,
+            background=simulation_requirement if simulation_requirement else t('interview.notProvided'),
+            count=len(agent_summaries),
+            agents=json.dumps(agent_summaries, ensure_ascii=False, indent=2),
+            max=max_agents,
+        )
 
         try:
             response = self.llm.chat_json(
@@ -1610,7 +1591,7 @@ class ZepToolsService:
             )
             
             selected_indices = response.get("selected_indices", [])[:max_agents]
-            reasoning = response.get("reasoning", "基于相关性自动选择")
+            reasoning = response.get("reasoning", t('interview.selectReasoningDefault'))
             
             # 获取选中的Agent完整信息
             selected_agents = []
@@ -1627,7 +1608,7 @@ class ZepToolsService:
             # 降级：选择前N个
             selected = profiles[:max_agents]
             indices = list(range(min(max_agents, len(profiles))))
-            return selected, indices, "使用默认选择策略"
+            return selected, indices, t('interview.selectFallbackReasoning')
     
     def _generate_interview_questions(
         self,
@@ -1637,27 +1618,16 @@ class ZepToolsService:
     ) -> List[str]:
         """使用LLM生成采访问题"""
         
-        agent_roles = [a.get("profession", "未知") for a in selected_agents]
+        agent_roles = [a.get("profession", t('interview.unknown')) for a in selected_agents]
         
-        system_prompt = """你是一个专业的记者/采访者。根据采访需求，生成3-5个深度采访问题。
+        system_prompt = t('interview.generateSystem')
 
-问题要求：
-1. 开放性问题，鼓励详细回答
-2. 针对不同角色可能有不同答案
-3. 涵盖事实、观点、感受等多个维度
-4. 语言自然，像真实采访一样
-5. 每个问题控制在50字以内，简洁明了
-6. 直接提问，不要包含背景说明或前缀
-
-返回JSON格式：{"questions": ["问题1", "问题2", ...]}"""
-
-        user_prompt = f"""采访需求：{interview_requirement}
-
-模拟背景：{simulation_requirement if simulation_requirement else "未提供"}
-
-采访对象角色：{', '.join(agent_roles)}
-
-请生成3-5个采访问题。"""
+        user_prompt = t(
+            'interview.generateUser',
+            requirement=interview_requirement,
+            background=simulation_requirement if simulation_requirement else t('interview.notProvided'),
+            roles=', '.join(agent_roles),
+        )
 
         try:
             response = self.llm.chat_json(
@@ -1668,14 +1638,14 @@ class ZepToolsService:
                 temperature=0.5
             )
             
-            return response.get("questions", [f"关于{interview_requirement}，您有什么看法？"])
+            return response.get("questions", [t('interview.questionDefault', requirement=interview_requirement)])
             
         except Exception as e:
             logger.warning(t("console.generateInterviewQuestionsFailed", error=e))
             return [
-                f"关于{interview_requirement}，您的观点是什么？",
-                "这件事对您或您所代表的群体有什么影响？",
-                "您认为应该如何解决或改进这个问题？"
+                t('interview.fallbackQuestion1', requirement=interview_requirement),
+                t('interview.fallbackQuestion2'),
+                t('interview.fallbackQuestion3'),
             ]
     
     def _generate_interview_summary(
@@ -1686,36 +1656,16 @@ class ZepToolsService:
         """生成采访摘要"""
         
         if not interviews:
-            return "未完成任何采访"
+            return t('interview.noInterviewsDone')
         
         # 收集所有采访内容
         interview_texts = []
         for interview in interviews:
-            interview_texts.append(f"【{interview.agent_name}（{interview.agent_role}）】\n{interview.response[:500]}")
+            interview_texts.append(f"{t('interview.intervieweeLabel', name=interview.agent_name, role=interview.agent_role)}\n{interview.response[:500]}")
         
-        quote_instruction = "引用受访者原话时使用中文引号「」" if get_locale() == 'zh' else 'Use quotation marks "" when quoting interviewees'
-        system_prompt = f"""你是一个专业的新闻编辑。请根据多位受访者的回答，生成一份采访摘要。
+        system_prompt = t('interview.summarySystem', quoteInstruction=t('interview.quoteInstruction'))
 
-摘要要求：
-1. 提炼各方主要观点
-2. 指出观点的共识和分歧
-3. 突出有价值的引言
-4. 客观中立，不偏袒任何一方
-5. 控制在1000字内
-
-格式约束（必须遵守）：
-- 使用纯文本段落，用空行分隔不同部分
-- 不要使用Markdown标题（如#、##、###）
-- 不要使用分割线（如---、***）
-- {quote_instruction}
-- 可以使用**加粗**标记关键词，但不要使用其他Markdown语法"""
-
-        user_prompt = f"""采访主题：{interview_requirement}
-
-采访内容：
-{"".join(interview_texts)}
-
-请生成采访摘要。"""
+        user_prompt = t('interview.summaryUser', topic=interview_requirement, texts="".join(interview_texts))
 
         try:
             summary = self.llm.chat(
@@ -1731,4 +1681,8 @@ class ZepToolsService:
         except Exception as e:
             logger.warning(t("console.generateInterviewSummaryFailed", error=e))
             # 降级：简单拼接
-            return f"共采访了{len(interviews)}位受访者，包括：" + "、".join([i.agent_name for i in interviews])
+            return t(
+                'interview.summaryFallback',
+                count=len(interviews),
+                names=t('interview.nameSeparator').join([i.agent_name for i in interviews]),
+            )

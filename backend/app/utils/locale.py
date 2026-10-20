@@ -67,3 +67,15 @@ def get_language_instruction() -> str:
     locale = get_locale()
     lang_config = _languages.get(locale, _languages.get('zh', {}))
     return lang_config.get('llmInstruction', '请使用中文回答。')
+
+
+def get_all_translations(key: str) -> list:
+    """Return the value of `key` in every loaded locale (missing ones skipped)."""
+    values = []
+    for messages in _translations.values():
+        value = messages
+        for part in key.split('.'):
+            value = value.get(part) if isinstance(value, dict) else None
+        if isinstance(value, str):
+            values.append(value)
+    return values
