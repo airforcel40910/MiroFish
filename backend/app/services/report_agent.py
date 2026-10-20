@@ -19,7 +19,7 @@ from datetime import datetime
 from enum import Enum
 
 from ..config import Config
-from ..utils.llm_client import LLMClient
+from ..utils.llm_client import LLMClient, TRUNCATED_FINISH_REASONS
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, t
 from .zep_tools import (
@@ -880,6 +880,10 @@ class ReportAgent:
     
     # 最大工具调用次数（每个章节）
     MAX_TOOL_CALLS_PER_SECTION = 5
+
+    # Output cap for every ReportAgent LLM call. 4096 cut report sections off
+    # mid-sentence; a full section needs well over that.
+    MAX_OUTPUT_TOKENS = 16000
     
     # 最大反思轮数
     MAX_REFLECTION_ROUNDS = 3
@@ -1218,7 +1222,8 @@ class ReportAgent:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3
+                temperature=0.3,
+                max_tokens=self.MAX_OUTPUT_TOKENS
             )
             
             if progress_callback:
@@ -1257,6 +1262,13 @@ class ReportAgent:
                 ]
             )
     
+    def _warn_if_truncated(self, section_title: str) -> None:
+        """Warn when the last section response stopped at the output token cap."""
+        if getattr(self.llm, "last_finish_reason", None) in TRUNCATED_FINISH_REASONS:
+            logger.warning(
+                t('report.sectionTruncated', title=section_title, maxTokens=self.MAX_OUTPUT_TOKENS)
+            )
+
     def _generate_section_react(
         self, 
         section: ReportSection,
@@ -1344,8 +1356,9 @@ class ReportAgent:
             response = self.llm.chat(
                 messages=messages,
                 temperature=0.5,
-                max_tokens=4096
+                max_tokens=self.MAX_OUTPUT_TOKENS
             )
+            self._warn_if_truncated(section.title)
 
             # 检查 LLM 返回是否为 None（API 异常或内容为空）
             if response is None:
@@ -1550,8 +1563,9 @@ class ReportAgent:
         response = self.llm.chat(
             messages=messages,
             temperature=0.5,
-            max_tokens=4096
+            max_tokens=self.MAX_OUTPUT_TOKENS
         )
+        self._warn_if_truncated(section.title)
 
         # 检查强制收尾时 LLM 返回是否为 None
         if response is None:
@@ -1871,7 +1885,8 @@ class ReportAgent:
         for iteration in range(max_iterations):
             response = self.llm.chat(
                 messages=messages,
-                temperature=0.5
+                temperature=0.5,
+                max_tokens=self.MAX_OUTPUT_TOKENS
             )
             
             # 解析工具调用
@@ -1913,7 +1928,8 @@ class ReportAgent:
         # 达到最大迭代，获取最终响应
         final_response = self.llm.chat(
             messages=messages,
-            temperature=0.5
+            temperature=0.5,
+            max_tokens=self.MAX_OUTPUT_TOKENS
         )
         
         # 清理响应

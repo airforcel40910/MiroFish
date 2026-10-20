@@ -19,6 +19,17 @@ from .openai_chat_compat import (
 
 logger = logging.getLogger(__name__)
 
+# finish_reason values meaning the output hit the max_tokens cap. The OpenAI
+# format uses "length"; "max_tokens" is the native Anthropic stop reason.
+TRUNCATED_FINISH_REASONS = frozenset({"length", "max_tokens"})
+
+
+def get_finish_reason(response: Any) -> Optional[str]:
+    """Return the first choice's finish_reason, or None if absent."""
+
+    choices = getattr(response, "choices", None) or []
+    return getattr(choices[0], "finish_reason", None) if choices else None
+
 
 class LLMResponseError(ValueError):
     """A safe, structured error for unusable model responses."""
@@ -112,6 +123,9 @@ class LLMClient:
             api_key=self.api_key,
             base_url=self.base_url
         )
+        # finish_reason of the most recent chat() call, for callers that need
+        # to know whether the text they got back was cut off.
+        self.last_finish_reason: Optional[str] = None
 
     def _create_completion(
         self,
@@ -157,6 +171,15 @@ class LLMClient:
             max_tokens=max_tokens,
             response_format=response_format,
         )
+        self.last_finish_reason = get_finish_reason(response)
+        if self.last_finish_reason in TRUNCATED_FINISH_REASONS:
+            logger.warning(
+                "LLM output was truncated at the token limit "
+                "(finish_reason=%s, max_tokens=%s, model=%s)",
+                self.last_finish_reason,
+                max_tokens,
+                self.model,
+            )
         content = extract_chat_completion_text(response)
         return _clean_chat_text(content)
     
