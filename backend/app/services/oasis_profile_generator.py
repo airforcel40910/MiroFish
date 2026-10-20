@@ -336,6 +336,31 @@ class OasisProfileGenerator:
             source_entity_type=entity_type,
         )
     
+    def build_direct_profile(self, data: Dict[str, Any], user_id: int) -> OasisAgentProfile:
+        """
+        直接使用结构化人设（如 prospects 文件）构建 Profile，不调用 LLM、不改写内容
+        
+        data 必须包含 name 和 persona；可选 bio、age、gender、mbti、country、
+        profession、interested_topics、entity_type
+        """
+        name = data["name"]
+        entity_type = data.get("entity_type") or "Person"
+        return OasisAgentProfile(
+            user_id=user_id,
+            user_name=data.get("username") or self._generate_username(name),
+            name=name,
+            bio=data.get("bio") or f"{data.get('profession') or entity_type}: {name}",
+            persona=data["persona"],
+            age=data.get("age"),
+            gender=data.get("gender"),
+            mbti=data.get("mbti"),
+            country=data.get("country"),
+            profession=data.get("profession"),
+            interested_topics=data.get("interested_topics", []),
+            source_entity_uuid=data.get("uuid"),
+            source_entity_type=entity_type,
+        )
+    
     def _generate_username(self, name: str) -> str:
         """生成用户名"""
         # 移除特殊字符，转换为小写
@@ -902,7 +927,8 @@ class OasisProfileGenerator:
         graph_id: Optional[str] = None,
         parallel_count: int = 5,
         realtime_output_path: Optional[str] = None,
-        output_platform: str = "reddit"
+        output_platform: str = "reddit",
+        direct_profiles: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> List[OasisAgentProfile]:
         """
         批量从实体生成Agent Profile（支持并行生成）
@@ -915,6 +941,7 @@ class OasisProfileGenerator:
             parallel_count: 并行生成数量，默认5
             realtime_output_path: 实时写入的文件路径（如果提供，每生成一个就写入一次）
             output_platform: 输出平台格式 ("reddit" 或 "twitter")
+            direct_profiles: {entity_uuid: 结构化人设}，命中的实体直接按原文构建 Profile
             
         Returns:
             Agent Profile列表
@@ -971,11 +998,14 @@ class OasisProfileGenerator:
             entity_type = entity.get_entity_type() or "Entity"
             
             try:
-                profile = self.generate_profile_from_entity(
-                    entity=entity,
-                    user_id=idx,
-                    use_llm=use_llm
-                )
+                if direct_profiles and entity.uuid in direct_profiles:
+                    profile = self.build_direct_profile(direct_profiles[entity.uuid], idx)
+                else:
+                    profile = self.generate_profile_from_entity(
+                        entity=entity,
+                        user_id=idx,
+                        use_llm=use_llm
+                    )
                 
                 # 实时输出生成的人设到控制台和日志
                 self._print_generated_profile(entity.name, entity_type, profile)

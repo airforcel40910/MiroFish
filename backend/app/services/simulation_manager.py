@@ -14,7 +14,7 @@ from enum import Enum
 
 from ..config import Config
 from ..utils.logger import get_logger
-from .zep_entity_reader import ZepEntityReader, FilteredEntities
+from .zep_entity_reader import ZepEntityReader, FilteredEntities, EntityNode, normalize_entity_name
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
 from ..utils.locale import t
@@ -123,6 +123,38 @@ class SimulationState:
             "config_generated": self.config_generated,
             "error": self.error,
         }
+
+
+def build_direct_entities(direct_profiles: List[Dict[str, Any]]) -> List[EntityNode]:
+    """
+    把结构化人设列表（如 prospects 文件）转换为实体，按原顺序、一人一个 Agent
+    
+    每条必须有唯一的 name 和非空的 persona；entity_type 默认 Person。
+    返回的实体 attributes["direct_profile"] 保存原始人设，生成 Profile 时原文使用。
+    """
+    entities = []
+    seen = set()
+    for i, data in enumerate(direct_profiles):
+        if not isinstance(data, dict):
+            raise ValueError(f"direct_profiles[{i}] 必须是对象")
+        name = str(data.get("name") or "").strip()
+        persona = str(data.get("persona") or "").strip()
+        if not name or not persona:
+            raise ValueError(f"direct_profiles[{i}] 缺少 name 或 persona")
+        key = normalize_entity_name(name)
+        if key in seen:
+            raise ValueError(f"direct_profiles 中名称重复: {name}")
+        seen.add(key)
+        entity_type = str(data.get("entity_type") or "Person")
+        uuid = f"direct_{i:04d}"
+        entities.append(EntityNode(
+            uuid=uuid,
+            name=name,
+            labels=["Entity", entity_type],
+            summary=persona,
+            attributes={"direct_profile": {**data, "name": name, "persona": persona, "uuid": uuid}},
+        ))
+    return entities
 
 
 class SimulationManager:
@@ -249,7 +281,9 @@ class SimulationManager:
         defined_entity_types: Optional[List[str]] = None,
         use_llm_for_profiles: bool = True,
         progress_callback: Optional[callable] = None,
-        parallel_profile_count: int = 3
+        parallel_profile_count: int = 3,
+        direct_profiles: Optional[List[Dict[str, Any]]] = None,
+        direct_profiles_only: bool = False
     ) -> SimulationState:
         """
         准备模拟环境（全程自动化）
@@ -269,6 +303,8 @@ class SimulationManager:
             use_llm_for_profiles: 是否使用LLM生成详细人设
             progress_callback: 进度回调函数 (stage, progress, message)
             parallel_profile_count: 并行生成人设的数量，默认3
+            direct_profiles: 结构化人设列表，每条原文成为一个 Agent（不经图谱抽取）
+            direct_profiles_only: True 时图谱实体不生成 Agent，图谱只作为背景知识
             
         Returns:
             SimulationState
@@ -301,6 +337,25 @@ class SimulationManager:
                 defined_entity_types=defined_entity_types,
                 enrich_with_edges=True
             )
+            
+            # 直接人设：排在最前（Agent ID 0..N-1），与之同名的图谱实体不再重复生成
+            direct_entities = build_direct_entities(direct_profiles or [])
+            if direct_entities:
+                with open(os.path.join(sim_dir, "direct_profiles.json"), 'w', encoding='utf-8') as f:
+                    json.dump(direct_profiles, f, ensure_ascii=False, indent=2)
+                direct_names = {normalize_entity_name(e.name) for e in direct_entities}
+                graph_entities = [] if direct_profiles_only else [
+                    e for e in filtered.entities
+                    if normalize_entity_name(e.name) not in direct_names
+                ]
+                logger.info(f"直接人设 {len(direct_entities)} 个，保留图谱实体 {len(graph_entities)} 个"
+                            f"（共读取 {filtered.filtered_count} 个）")
+                filtered = FilteredEntities(
+                    entities=direct_entities + graph_entities,
+                    entity_types={e.get_entity_type() for e in direct_entities + graph_entities},
+                    total_count=filtered.total_count,
+                    filtered_count=len(direct_entities) + len(graph_entities),
+                )
             
             state.entities_count = filtered.filtered_count
             state.entity_types = list(filtered.entity_types)
@@ -361,7 +416,8 @@ class SimulationManager:
                 graph_id=state.graph_id,  # 传入graph_id用于Zep检索
                 parallel_count=parallel_profile_count,  # 并行生成数量
                 realtime_output_path=realtime_output_path,  # 实时保存路径
-                output_platform=realtime_platform  # 输出格式
+                output_platform=realtime_platform,  # 输出格式
+                direct_profiles={e.uuid: e.attributes["direct_profile"] for e in direct_entities}
             )
             
             state.profiles_count = len(profiles)
