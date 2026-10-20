@@ -674,6 +674,11 @@ class SimulationConfigGenerator:
             for t, examples in type_examples.items()
         ])
         
+        # 全部可发帖的 Agent 名称，让 LLM 指定具体发布者，避免按类型轮流分配导致张冠李戴
+        poster_names = "\n".join(
+            f"- {e.name} ({e.get_entity_type() or 'Unknown'})" for e in entities
+        )
+        
         # 使用配置的上下文截断长度
         context_truncated = context[:self.EVENT_CONFIG_CONTEXT_LENGTH]
         
@@ -686,28 +691,31 @@ class SimulationConfigGenerator:
 ## 可用实体类型及示例
 {type_info}
 
+## 可用发布者（Agent 名称）
+{poster_names}
+
 ## 任务
 请生成事件配置JSON：
 - 提取热点话题关键词
 - 描述舆论发展方向
-- 设计初始帖子内容，**每个帖子必须指定 poster_type（发布者类型）**
+- 设计初始帖子内容，**每个帖子必须指定 poster_name（发布者名称）和 poster_type（发布者类型）**
 
-**重要**: poster_type 必须从上面的"可用实体类型"中选择，这样初始帖子才能分配给合适的 Agent 发布。
-例如：官方声明应由 Official/University 类型发布，新闻由 MediaOutlet 发布，学生观点由 Student 发布。
+**重要**: poster_name 必须与上面"可用发布者"中的某个名称完全一致，且帖子内容必须是该发布者本人的观点和经历（第一人称的经历只能由其本人发布）。
+poster_type 必须从上面的"可用实体类型"中选择，作为 poster_name 无法匹配时的备用分配依据。
 
 返回JSON格式（不要markdown）：
 {{
     "hot_topics": ["关键词1", "关键词2", ...],
     "narrative_direction": "<舆论发展方向描述>",
     "initial_posts": [
-        {{"content": "帖子内容", "poster_type": "实体类型（必须从可用类型中选择）"}},
+        {{"content": "帖子内容", "poster_name": "发布者名称（必须从可用发布者中选择）", "poster_type": "实体类型（必须从可用类型中选择）"}},
         ...
     ],
     "reasoning": "<简要说明>"
 }}"""
 
         system_prompt = "你是舆论分析专家。返回纯JSON格式。注意 poster_type 必须精确匹配可用实体类型。"
-        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
+        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_name' field value MUST be copied exactly from the available posters list, and the 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
 
         try:
             return self._call_llm_with_retry(prompt, system_prompt)
@@ -762,19 +770,34 @@ class SimulationConfigGenerator:
             "person": ["person", "student", "alumni"],
         }
         
+        # 按名称建立 agent 索引（优先按 poster_name 精确分配给写这条帖子的人）
+        agents_by_name: Dict[str, AgentActivityConfig] = {}
+        for agent in agent_configs:
+            agents_by_name.setdefault(self._normalize_name(agent.entity_name), agent)
+        
         # 记录每种类型已使用的 agent 索引，避免重复使用同一个 agent
         used_indices: Dict[str, int] = {}
         
         updated_posts = []
         for post in event_config.initial_posts:
             poster_type = post.get("poster_type", "").lower()
+            poster_name = post.get("poster_name", "") or ""
             content = post.get("content", "")
             
             # 尝试找到匹配的 agent
             matched_agent_id = None
             
+            # 0. 按名称匹配
+            named_agent = agents_by_name.get(self._normalize_name(poster_name))
+            if named_agent is not None:
+                matched_agent_id = named_agent.agent_id
+            elif poster_name:
+                logger.warning(f"未找到名称 '{poster_name}' 的 Agent，按类型分配")
+            
             # 1. 直接匹配
-            if poster_type in agents_by_type:
+            if matched_agent_id is not None:
+                pass
+            elif poster_type in agents_by_type:
                 agents = agents_by_type[poster_type]
                 idx = used_indices.get(poster_type, 0) % len(agents)
                 matched_agent_id = agents[idx].agent_id
@@ -805,14 +828,20 @@ class SimulationConfigGenerator:
             
             updated_posts.append({
                 "content": content,
+                "poster_name": poster_name,
                 "poster_type": post.get("poster_type", "Unknown"),
                 "poster_agent_id": matched_agent_id
             })
             
-            logger.info(f"初始帖子分配: poster_type='{poster_type}' -> agent_id={matched_agent_id}")
+            logger.info(f"初始帖子分配: poster_name='{poster_name}', poster_type='{poster_type}' -> agent_id={matched_agent_id}")
         
         event_config.initial_posts = updated_posts
         return event_config
+    
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """名称归一化：忽略大小写、多余空白和首尾标点"""
+        return " ".join(str(name or "").lower().split()).strip(" .,'\"")
     
     def _generate_agent_configs_batch(
         self,

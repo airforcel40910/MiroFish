@@ -282,7 +282,11 @@
     "errorOccurred": "抱歉，发生了错误: {error}",
     "noResponse": "无响应",
     "requestFailed": "请求失败",
-    "selectAgentFirst": "请先选择一个模拟个体"
+    "selectAgentFirst": "请先选择一个模拟个体",
+    "chatHistoryAsker": "提问者",
+    "chatHistoryYou": "你",
+    "chatHistoryLine": "{speaker}：{content}",
+    "chatHistoryWrapper": "以下是我们之前的对话：\n{history}\n\n现在我的新问题是：{message}"
   },
   "graph": {
     "panelTitle": "Graph Relationship Visualization",

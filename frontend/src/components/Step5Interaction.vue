@@ -722,9 +722,12 @@ const sendToAgent = async (message) => {
     const historyContext = chatHistory.value
       .slice(0, -1)
       .slice(-6)
-      .map(msg => `${msg.role === 'user' ? '提问者' : '你'}：${msg.content}`)
+      .map(msg => t('step5.chatHistoryLine', {
+        speaker: msg.role === 'user' ? t('step5.chatHistoryAsker') : t('step5.chatHistoryYou'),
+        content: msg.content
+      }))
       .join('\n')
-    prompt = `以下是我们之前的对话：\n${historyContext}\n\n现在我的新问题是：${message}`
+    prompt = t('step5.chatHistoryWrapper', { history: historyContext, message })
   }
   
   const res = await interviewAgents({
