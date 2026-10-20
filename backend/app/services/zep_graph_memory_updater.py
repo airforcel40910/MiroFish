@@ -15,6 +15,7 @@ from ..utils.logger import get_logger
 from ..utils.locale import get_locale, set_locale
 from ..utils.zep import (
     ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
+    ZEP_INGESTION_SECONDS_PER_EPISODE,
     call_zep_read_with_retry,
     get_zep_client,
 )
@@ -338,7 +339,18 @@ class ZepGraphMemoryUpdater:
                 "simulation graph ingestion is incomplete"
             )
 
-        self._wait_for_pending_episodes(deadline=deadline)
+        # A large run can leave hundreds of episodes queued in Zep; a fixed
+        # deadline fails the run while ingestion is still progressing.
+        pending_count = len(self._pending_episode_uuids)
+        episode_deadline = max(
+            deadline,
+            time.time() + ZEP_INGESTION_SECONDS_PER_EPISODE * pending_count,
+        )
+        logger.info(
+            f"Waiting up to {episode_deadline - time.time():.0f}s for "
+            f"{pending_count} Zep episode(s) to be processed"
+        )
+        self._wait_for_pending_episodes(deadline=episode_deadline)
         
         logger.info(f"ZepGraphMemoryUpdater 已停止: graph_id={self.graph_id}, "
                    f"total_activities={self._total_activities}, "
