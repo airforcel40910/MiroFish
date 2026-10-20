@@ -3,6 +3,7 @@ Zep实体读取与过滤服务
 从Zep图谱中读取节点，筛选出符合预定义实体类型的节点
 """
 
+import re
 from typing import Dict, Any, List, Optional, Set, Callable, TypeVar
 from dataclasses import dataclass, field
 from zep_cloud import NotFoundError
@@ -16,6 +17,25 @@ logger = get_logger('mirofish.zep_entity_reader')
 
 # 用于泛型返回类型
 T = TypeVar('T')
+
+# 图谱抽取时，无法解析的指代（如 "he"、"a founder"）会被建成占位名称的节点，
+# 其摘要实际描述的是另一个已命名实体，会产生重复 Agent（如 "unidentified person"）
+_PLACEHOLDER_NAME_RE = re.compile(
+    r"^(an?\s+|the\s+)?(unidentified|unnamed|unknown|anonymous|unspecified|"
+    r"some|another|other)?\s*(person|individual|man|woman|someone|somebody|"
+    r"user|founder|executive|entity)?$"
+)
+
+
+def _normalize_entity_name(name: str) -> str:
+    return " ".join(str(name or "").lower().split()).strip(" .,'\"")
+
+
+def is_placeholder_entity_name(name: str) -> bool:
+    """名称为空或只是泛指（未指向具体个人/机构）时返回 True"""
+    normalized = _normalize_entity_name(name)
+    match = _PLACEHOLDER_NAME_RE.match(normalized)
+    return not normalized or bool(match and (match.group(2) or match.group(3)))
 
 
 @dataclass
@@ -254,6 +274,7 @@ class ZepEntityReader:
         # 筛选符合条件的实体
         filtered_entities = []
         entity_types_found = set()
+        seen_names: Set[str] = set()
         
         for node in all_nodes:
             labels = node.get("labels", [])
@@ -263,6 +284,17 @@ class ZepEntityReader:
             
             if not custom_labels:
                 # 只有默认标签，跳过
+                continue
+            
+            # 占位名称（未解析的指代）不生成 Agent，避免与已命名实体重复
+            if is_placeholder_entity_name(node.get("name", "")):
+                logger.warning(f"跳过占位名称实体: '{node.get('name', '')}' ({node['uuid']})")
+                continue
+            
+            # 同名实体只保留第一个
+            normalized_name = _normalize_entity_name(node["name"])
+            if normalized_name in seen_names:
+                logger.warning(f"跳过重复名称实体: '{node['name']}' ({node['uuid']})")
                 continue
             
             # 如果指定了预定义类型，检查是否匹配
@@ -325,6 +357,7 @@ class ZepEntityReader:
                 entity.related_nodes = related_nodes
             
             filtered_entities.append(entity)
+            seen_names.add(normalized_name)
         
         logger.info(f"筛选完成: 总节点 {total_count}, 符合条件 {len(filtered_entities)}, "
                    f"实体类型: {entity_types_found}")
