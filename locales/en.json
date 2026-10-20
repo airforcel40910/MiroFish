@@ -595,6 +595,7 @@
     "multiToolOnlyFirst": "LLM attempted {total} tool calls, executing only the first: {toolName}",
     "sectionNoPrefix": "Section {title} missing 'Final Answer:' prefix, adopting LLM output as final content (tool calls: {count})",
     "sectionMaxIter": "Section {title} reached max iterations, forcing generation",
+    "sectionTruncated": "Section {title}: LLM output hit the {maxTokens}-token limit and was cut off; the section may end mid-sentence",
     "sectionForceFailed": "Section {title} force-finish LLM returned None, using default error message",
     "sectionGenFailedContent": "(This section failed to generate: LLM returned empty response, please retry later)",
     "outlineSavedToFile": "Outline saved to file: {reportId}/outline.json",
