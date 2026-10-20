@@ -10,9 +10,9 @@ from flask import request, jsonify, send_file
 
 from . import simulation_bp
 from ..config import Config
-from ..services.zep_entity_reader import ZepEntityReader
+from ..services.zep_entity_reader import ZepEntityReader, normalize_entity_name
 from ..services.oasis_profile_generator import OasisProfileGenerator
-from ..services.simulation_manager import SimulationManager, SimulationStatus
+from ..services.simulation_manager import SimulationManager, SimulationStatus, build_direct_entities
 from ..services.simulation_runner import (
     SimulationRunner,
     RunnerStatus,
@@ -412,7 +412,9 @@ def prepare_simulation():
             "entity_types": ["Student", "PublicFigure"],  // 可选，指定实体类型
             "use_llm_for_profiles": true,                 // 可选，是否用LLM生成人设
             "parallel_profile_count": 5,                  // 可选，并行生成人设数量，默认5
-            "force_regenerate": false                     // 可选，强制重新生成，默认false
+            "force_regenerate": false,                    // 可选，强制重新生成，默认false
+            "direct_profiles": [{"name": "...", "persona": "...", ...}],  // 可选，原文人设，每条一个Agent
+            "direct_profiles_only": false                 // 可选，true 时图谱实体不生成Agent
         }
     
     返回：
@@ -497,6 +499,16 @@ def prepare_simulation():
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)
         parallel_profile_count = data.get('parallel_profile_count', 5)
+        direct_profiles = data.get('direct_profiles') or []
+        direct_profiles_only = bool(data.get('direct_profiles_only', False))
+        if not isinstance(direct_profiles, list):
+            return jsonify({"success": False, "error": "direct_profiles must be a list"}), 400
+        try:
+            direct_entities = build_direct_entities(direct_profiles)
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
+        if direct_profiles_only and not direct_entities:
+            return jsonify({"success": False, "error": "direct_profiles_only requires direct_profiles"}), 400
         
         # ========== 同步获取实体数量（在后台任务启动前） ==========
         # 这样前端在调用prepare后立即就能获取到预期Agent总数
@@ -512,6 +524,14 @@ def prepare_simulation():
             # 保存实体数量到状态（供前端立即获取）
             state.entities_count = filtered_preview.filtered_count
             state.entity_types = list(filtered_preview.entity_types)
+            if direct_entities:
+                direct_names = {normalize_entity_name(e.name) for e in direct_entities}
+                graph_kept = [] if direct_profiles_only else [
+                    e for e in filtered_preview.entities
+                    if normalize_entity_name(e.name) not in direct_names
+                ]
+                state.entities_count = len(direct_entities) + len(graph_kept)
+                state.entity_types = list({e.get_entity_type() for e in direct_entities + graph_kept})
             logger.info(f"预期实体数量: {filtered_preview.filtered_count}, 类型: {filtered_preview.entity_types}")
         except Exception as e:
             logger.warning(f"同步获取实体数量失败（将在后台任务中重试）: {e}")
@@ -617,7 +637,9 @@ def prepare_simulation():
                     defined_entity_types=entity_types_list,
                     use_llm_for_profiles=use_llm_for_profiles,
                     progress_callback=progress_callback,
-                    parallel_profile_count=parallel_profile_count
+                    parallel_profile_count=parallel_profile_count,
+                    direct_profiles=direct_profiles,
+                    direct_profiles_only=direct_profiles_only
                 )
 
                 if result_state.status == SimulationStatus.FAILED:

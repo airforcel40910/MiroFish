@@ -27,13 +27,13 @@ _PLACEHOLDER_NAME_RE = re.compile(
 )
 
 
-def _normalize_entity_name(name: str) -> str:
+def normalize_entity_name(name: str) -> str:
     return " ".join(str(name or "").lower().split()).strip(" .,'\"")
 
 
 def is_placeholder_entity_name(name: str) -> bool:
     """名称为空或只是泛指（未指向具体个人/机构）时返回 True"""
-    normalized = _normalize_entity_name(name)
+    normalized = normalize_entity_name(name)
     match = _PLACEHOLDER_NAME_RE.match(normalized)
     return not normalized or bool(match and (match.group(2) or match.group(3)))
 
@@ -292,7 +292,7 @@ class ZepEntityReader:
                 continue
             
             # 同名实体只保留第一个
-            normalized_name = _normalize_entity_name(node["name"])
+            normalized_name = normalize_entity_name(node["name"])
             if normalized_name in seen_names:
                 logger.warning(f"跳过重复名称实体: '{node['name']}' ({node['uuid']})")
                 continue
