@@ -235,3 +235,29 @@ def test_flush_deadline_keeps_unattempted_platform_for_a_safe_retry(monkeypatch)
     updater._flush_remaining(deadline=1.0)
     assert updater._platform_buffers["reddit"] == []
     assert len(writes) == 2
+
+
+def test_stop_scales_the_pending_episode_wait_with_episode_count(monkeypatch):
+    updater = _updater(monkeypatch, lambda **_kwargs: SimpleNamespace(uuid_="unused"))
+    updater._pending_episode_uuids = [f"episode-{i}" for i in range(133)]
+    monkeypatch.setattr(updater_module.time, "time", lambda: 1000.0)
+    seen = {}
+    monkeypatch.setattr(updater, "_wait_for_pending_episodes",
+                        lambda *, deadline: seen.setdefault("deadline", deadline))
+
+    updater.stop()
+
+    assert seen["deadline"] == 1000.0 + 133 * updater_module.ZEP_INGESTION_SECONDS_PER_EPISODE
+
+
+def test_stop_keeps_the_base_deadline_for_small_runs(monkeypatch):
+    updater = _updater(monkeypatch, lambda **_kwargs: SimpleNamespace(uuid_="unused"))
+    updater._pending_episode_uuids = ["episode-1"]
+    monkeypatch.setattr(updater_module.time, "time", lambda: 1000.0)
+    seen = {}
+    monkeypatch.setattr(updater, "_wait_for_pending_episodes",
+                        lambda *, deadline: seen.setdefault("deadline", deadline))
+
+    updater.stop()
+
+    assert seen["deadline"] == 1000.0 + updater_module.ZEP_INGESTION_WAIT_TIMEOUT_SECONDS

@@ -26,6 +26,9 @@ ZEP_HTTP_REQUEST_TIMEOUT_SECONDS = 60.0
 # Zep ingestion is asynchronous and may take several minutes. Preserve the
 # original GraphBuilder deadline while keeping it separate from HTTP timeout.
 ZEP_INGESTION_WAIT_TIMEOUT_SECONDS = 600
+# Simulation activity is ingested at roughly 20s per episode on Zep Cloud, so the
+# final wait for pending simulation episodes scales with how many were sent.
+ZEP_INGESTION_SECONDS_PER_EPISODE = 30
 MAX_ZEP_SEARCH_QUERY_CHARS = 400
 MAX_ZEP_SEARCH_RESULTS = 50
 
